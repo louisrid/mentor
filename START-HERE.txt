@@ -1,0 +1,27 @@
+MENTOR FOR MAC
+
+EASIEST INSTALL OR UPDATE
+Paste this into Terminal on your Mac:
+
+curl -fsSL https://raw.githubusercontent.com/louisrid/mentor/main/scripts/update-mac.sh -o /tmp/mentor-update.sh && bash /tmp/mentor-update.sh
+
+It builds, installs and opens Mentor. Use the same command for future updates.
+If Apple tools need installing, finish the popup and run the command again.
+
+BUILD FROM THIS FOLDER
+1. Double-click Build-Mentor.command in this folder.
+2. If Apple Command Line Tools need installing, finish the popup and run it again.
+3. The script builds Mentor, then opens the actual DMG installer automatically.
+4. Drag Mentor.app to Applications in the installer window.
+5. Open Mentor from Applications. Paste your OpenRouter key and click Start chatting.
+
+If the script already built Mentor, run it again: it reopens the current DMG without rebuilding. Updated source is rebuilt.
+
+This ZIP contains the complete source and build script. It is not a precompiled DMG.
+If macOS will not run the script, open Terminal, type bash followed by a space, drag Build-Mentor.command into Terminal, then press Return.
+
+UPDATING AN INSTALLED COPY
+Quit Mentor with Command+Q. Run the build script in this updated folder. Drag the new app to Applications and choose Replace. Your local chats, context and key are kept.
+
+PERSONAL CONTEXT
+Open Settings, expand Personal context, paste your text into About you and click Save. Nothing is filled in automatically.
