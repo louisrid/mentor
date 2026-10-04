@@ -35,7 +35,7 @@ The macOS app and DMG must be built on macOS. This source package is not a preco
 - Tauri 2 .app and .dmg build configuration, Dock presence, borderless pure-black draggable/resizable window.
 - Streaming OpenRouter replies; stop/cancel; bounded output and recent history.
 - Direct, positive, occasionally rude and genuinely kind mentor prompt, UK English, realistic money/career advice.
-- Editable sliders for bluntness, positivity, verbosity, swearing and challenge. Temperature defaults to 0.7.
+- Editable sliders for bluntness, positivity, swearing and challenge. Reply length is fixed. Temperature defaults to 0.7.
 - An opt-in Personal context box, blank on a new install, with editable goals and system instructions.
 - Persistent SQLite conversation archive and last-conversation restore after restarting.
 - New conversation / clear visible conversation without deleting archive or memory; conversation history and Markdown export.
@@ -112,3 +112,7 @@ The command downloads the latest source, builds Mentor, replaces the installed a
 ## Keychain prompts
 
 Mentor reads the saved API key once per app session and holds it only in the native process memory. Opening settings/history, sending messages and refreshing the interface reuse that result. Saving or removing a key updates the session immediately. A denied or missing read is also remembered until you relaunch or save a key. The key remains stored in macOS Keychain and is never sent to the frontend. If macOS asks whether Mentor may access it, choose Always Allow to avoid permission prompts on later launches. Rebuilding an unsigned app can cause macOS to ask again.
+
+## Fixed reply view
+
+Mentor stays pinned in the top-left corner. Chat shows one message at a time with arrow buttons for earlier/later messages, rather than a scrolling transcript. New replies are limited in native code to 40 words, 240 Unicode characters and 160 output tokens. Smaller windows send a lower character limit based on the available text area. Replies use a single paragraph. The reply-length slider and token-limit field have been removed. Longer archived messages remain available in fitted pages using the arrows, and full transcripts remain exportable. Settings can still scroll.

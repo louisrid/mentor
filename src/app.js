@@ -1,7 +1,8 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { renderText, formatSpend } from './format.js';
+import { formatSpend } from './format.js';
 import './styles.css';
+import { ChatScreen } from './chat-screen.js';
 import { appendMarkdownFiles } from './import-context.js';
 const $ = id => document.getElementById(id);
 let state, conversation, busy=false, models=[], draft=null;
@@ -9,6 +10,7 @@ $('app').innerHTML = `
   <div id="drag" class="drag" aria-label="Drag window"></div>
   <div class="toolbar"><span class="brand">Mentor</span><button id="new" title="New conversation · ⌘N">New</button><button id="history">Chats</button><button id="settings">Settings</button><button id="hide" title="Hide · ⌘W">Hide</button></div>
   <main id="chat" class="chat" role="log" aria-label="Conversation" aria-live="off"></main>
+  <nav class="chat-nav" aria-label="Message navigation"><button id="previous-message" aria-label="Earlier message">←</button><span id="message-position"></span><button id="next-message" aria-label="Next message">→</button></nav>
   <div id="notice" class="notice" role="status"></div>
   <form id="composer" class="composer"><span class="prompt">&gt;</span><textarea id="input" rows="1" placeholder="Message Mentor…" aria-label="Message" maxlength="6000"></textarea><button id="send" type="submit">Send</button><button id="stop" type="button" hidden>Stop</button></form>
   <div class="footer"><span id="model-label">connecting…</span><span id="spend">0.00¢ today</span></div>
@@ -16,20 +18,10 @@ $('app').innerHTML = `
 function notify(text=''){$('notice').textContent=text;}
 function report(error){notify(String(error));}
 function setBusy(value){busy=value;$('panel-close').disabled=value;for(const id of ['new','history','settings','send'])$(id).disabled=value;$('stop').hidden=!value;$('send').hidden=value;}
-function empty(){
-  $('chat').replaceChildren();const div=document.createElement('div');div.className='empty';
-  div.innerHTML='<div class="title">What’s on your mind?</div><p>Talk it through.</p>';
-  $('chat').append(div);
-}
-function addMessage(role,text,status='complete'){
-  $('chat').querySelector('.empty')?.remove();const el=document.createElement('article');el.className=`message ${role}`;
-  const who=document.createElement('div');who.className='who';who.textContent=role==='user'?'YOU':'MENTOR';
-  const body=document.createElement('div');body.className='body';renderText(body,text);el.append(who,body);
-  if(status!=='complete'){const tag=document.createElement('div');tag.className='state';tag.textContent=status;el.append(tag);}
-  $('chat').append(el);return body;
-}
-function bottom(){ $('chat').scrollTop=$('chat').scrollHeight; }
-async function load(id){conversation=id;localStorage.setItem('conversation',id);const messages=await invoke('messages',{id});empty();for(const m of messages)addMessage(m.role,m.content,m.status);bottom();$('input').focus();}
+const screen = new ChatScreen($('chat'), $('previous-message'), $('next-message'), $('message-position'));
+function empty(){screen.clear();}
+function addMessage(role,text,status='complete'){return screen.add(role,text,status);}
+async function load(id){conversation=id;localStorage.setItem('conversation',id);const messages=await invoke('messages',{id});empty();for(const m of messages)addMessage(m.role,m.content,m.status);$('input').focus();}
 async function refresh(){state=await invoke('snapshot');$('model-label').textContent=state.config.model.split('/').pop();$('spend').textContent=`${formatSpend(state.spend)} / ${formatSpend(state.config.daily_budget)} today`;}
 async function newChat(){if(busy)return;const id=await invoke('new_conversation');await refresh();await load(id);notify();}
 $('drag').addEventListener('mousedown',async e=>{if(e.button===0)try{await getCurrentWindow().startDragging();}catch(e){report(e);}});
@@ -42,9 +34,9 @@ $('input').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.prev
 $('composer').onsubmit=async e=>{
   e.preventDefault();const text=$('input').value.trim();if(!text||busy)return;
   if(!state.has_key){await openSetup();return;}
-  setBusy(true);notify();$('input').value='';$('input').style.height='auto';addMessage('user',text);const body=addMessage('assistant','');bottom();let answer='';
-  const channel=new Channel();channel.onmessage=event=>{const follow=$('chat').scrollHeight-$('chat').scrollTop-$('chat').clientHeight<100;answer+=event.text;renderText(body,answer);if(follow)bottom();};
-  try{const result=await invoke('chat',{id:conversation,text,onToken:channel});notify(result.memory_note && result.memory_note!=='Memory updated.' ? result.memory_note : (result.status==='stopped'?'Stopped.':''));}
+  setBusy(true);notify();$('input').value='';$('input').style.height='auto';addMessage('user',text);const body=addMessage('assistant','');const replyChars=screen.replyChars();let answer='';
+  const channel=new Channel();channel.onmessage=event=>{answer+=event.text;screen.update(body,answer);};
+  try{const result=await invoke('chat',{id:conversation,text,replyChars,onToken:channel});notify(result.memory_note && result.memory_note!=='Memory updated.' ? result.memory_note : (result.status==='stopped'?'Stopped.':''));}
   catch(error){report(error);if(!answer)$('input').value=text;}
   finally{setBusy(false);try{await refresh();await load(conversation);}catch(error){report(error);}}
 };
@@ -118,15 +110,15 @@ async function openSettings(){
   context.content.append(help('Paste text or add Markdown files. Click Save to keep them.'));
   context.content.append(button('Clear context',()=>{$('doc-profile').value='';$('doc-priorities').value='';}));
   const tone=group('Personality');root.append(tone.details);
-  for(const [id,label] of [['aggression','Bluntness'],['positivity','Positivity'],['verbosity','Reply length'],['swearing','Swearing'],['challenge','Challenge']])slider(tone.content,id,label,draft.config[id]);
+  for(const [id,label] of [['aggression','Bluntness'],['positivity','Positivity'],['swearing','Swearing'],['challenge','Challenge']])slider(tone.content,id,label,draft.config[id]);
   const advanced=group('Advanced');root.append(advanced.details);const a=advanced.content;
   const key=field('Replace OpenRouter key','api-key','','password');key.querySelector('input').autocomplete='off';a.append(key);
   const keyRow=document.createElement('div');keyRow.className='row';keyRow.append(button('Save key',async()=>{await invoke('save_api_key',{value:$('api-key').value});$('api-key').value='';await refresh();$('panel-note').textContent='Key saved.';}),button('Remove key',async()=>{await invoke('delete_api_key');await refresh();await openSetup();}));a.append(keyRow);
   a.append(field('Model','model',draft.config.model));const suggestions=document.createElement('datalist');suggestions.id='models';a.append(suggestions);$('model').setAttribute('list','models');
   const price=document.createElement('p');price.id='model-price';price.className='help';a.append(price);
   a.append(button('Refresh models',async()=>{models=await invoke('model_list');populateModels();}),button('Cheaper model',()=>{$('model').value='openai/gpt-oss-120b';showPrice();}));
-  a.append(field('Daily limit ($)','daily-budget',draft.config.daily_budget,'number'),field('Reply limit (tokens)','max-tokens',draft.config.max_tokens,'number'),field('Temperature','temperature',draft.config.temperature,'number'));
-  $('daily-budget').min='0.01';$('daily-budget').max='10';$('daily-budget').step='0.01';$('max-tokens').min='100';$('max-tokens').max='2000';$('max-tokens').step='50';$('temperature').min='0';$('temperature').max='1.5';$('temperature').step='0.1';
+  a.append(field('Daily limit ($)','daily-budget',draft.config.daily_budget,'number'),field('Temperature','temperature',draft.config.temperature,'number'));
+  $('daily-budget').min='0.01';$('daily-budget').max='10';$('daily-budget').step='0.01';$('temperature').min='0';$('temperature').max='1.5';$('temperature').step='0.1';
   a.append(field('Memory','doc-memory',draft.documents.memory,'textarea'),field('Instructions','doc-system',draft.documents.system,'textarea'));
   const update=button('Update memory',async()=>{
     $('panel-note').textContent='Updating…';setBusy(true);update.disabled=true;stop.hidden=false;
@@ -136,8 +128,8 @@ async function openSettings(){
   a.append(button('Open files',()=>invoke('open_data_folder')),button('Export chats',()=>invoke('export_history').then(()=>{$('panel-note').textContent='Exported.';})),button('Minimise window',()=>getCurrentWindow().minimize()));
   const save=button('Save',async()=>{
     if(busy)throw new Error('Wait for the reply.');const c={...draft.config};
-    for(const id of ['aggression','positivity','verbosity','swearing','challenge'])c[id]=Number($(id).value);
-    c.model=$('model').value.trim();c.daily_budget=Number($('daily-budget').value);c.max_tokens=Number($('max-tokens').value);c.temperature=Number($('temperature').value);c.auto_memory=$('auto-memory').checked;c.launch_at_login=$('launch-login').checked;
+    for(const id of ['aggression','positivity','swearing','challenge'])c[id]=Number($(id).value);
+    c.model=$('model').value.trim();c.daily_budget=Number($('daily-budget').value);c.max_tokens=160;c.verbosity=3;c.temperature=Number($('temperature').value);c.auto_memory=$('auto-memory').checked;c.launch_at_login=$('launch-login').checked;
     const documents={};for(const id of ['system','profile','priorities','memory'])documents[id]=$('doc-'+id).value;
     await invoke('save_settings',{config:c,documents});await refresh();closePanel();notify();
   });save.className='primary';$('panel-foot').append(save);

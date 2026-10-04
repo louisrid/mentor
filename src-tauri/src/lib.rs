@@ -13,6 +13,7 @@ mod desktop {
     #[derive(Clone, Serialize)]
     struct Token {
         text: String,
+        reply_chars: usize,
     }
     struct RuntimeStatus(Mutex<Vec<String>>);
     fn reveal(app: &AppHandle) {
@@ -79,7 +80,7 @@ mod desktop {
         store: State<'_, Store>,
     ) -> Result<ChatResult, String> {
         store
-            .chat(&id, &text, |s| {
+            .chat(&id, &text, reply_chars, |s| {
                 let _ = on_token.send(Token { text: s.into() });
             })
             .await

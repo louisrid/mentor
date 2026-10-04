@@ -7,7 +7,7 @@ printf '\nMENTOR · personal macOS build\n\n'
 # Open the disk image itself, rather than its containing build folder.
 open_installer() {
   local mentor_dmg
-  for mentor_dmg in src-tauri/target/release/bundle/dmg/Mentor_0.1.4_*.dmg; do
+  for mentor_dmg in src-tauri/target/release/bundle/dmg/Mentor_0.1.5_*.dmg; do
     if [ -f "$mentor_dmg" ]; then
       printf '\nOpening the Mentor installer. Drag Mentor.app into Applications, then launch it there.\n'
       open "$mentor_dmg"

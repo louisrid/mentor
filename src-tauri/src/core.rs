@@ -19,6 +19,13 @@ fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 const API: &str = "https://openrouter.ai/api/v1";
+const REPLY_WORDS: usize = 40;
+const REPLY_CHARS: usize = 240;
+const REPLY_TOKENS: u32 = 160;
+fn reply_limit(text: &str, chars: usize) -> String {
+    text.split_whitespace().take(REPLY_WORDS).collect::<Vec<_>>()
+        .join(" ").chars().take(chars.min(REPLY_CHARS)).collect()
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -40,7 +47,7 @@ impl Default for Config {
         Self {
             model: "openai/gpt-5.6-luna".into(),
             temperature: 0.7,
-            max_tokens: 700,
+            max_tokens: REPLY_TOKENS,
             daily_budget: 0.30,
             aggression: 7,
             positivity: 8,
@@ -425,6 +432,7 @@ impl Store {
         c: &Config,
         messages: Vec<Value>,
         tokens: u32,
+        reply_chars: usize,
         kind: &str,
         cancel: &CancellationToken,
         mut output: F,
@@ -452,6 +460,7 @@ impl Store {
         let mut stream = response.bytes_stream();
         let mut decoder = Sse::default();
         let mut text = String::new();
+        let mut raw_reply = String::new();
         let mut stopped = false;
         let mut done = false;
         loop {
@@ -476,8 +485,12 @@ impl Store {
                     self.settle(&charge, Some(u))?;
                 }
                 if let Some(s) = v["choices"][0]["delta"]["content"].as_str() {
-                    text.push_str(s);
-                    output(s);
+                    if kind == "chat" {
+                        raw_reply.push_str(s);
+                        let bounded = reply_limit(&raw_reply, reply_chars);
+                        if bounded.len() > text.len() { output(&bounded[text.len()..]); }
+                        text = bounded;
+                    } else { text.push_str(s); output(s); }
                 }
                 if v["choices"][0]["finish_reason"].as_str().is_some() {
                     done = true;
@@ -498,6 +511,7 @@ impl Store {
         &self,
         id: &str,
         input: &str,
+        reply_chars: usize,
         mut output: F,
     ) -> Result<ChatResult> {
         let _guard = self
@@ -509,6 +523,7 @@ impl Store {
             return Err("Write a message up to 6,000 bytes.".into());
         }
         let c = self.config()?;
+        let reply_chars = reply_chars.clamp(1, REPLY_CHARS);
         let d = self.documents()?;
         let existing = self.messages(id)?;
         if !self.conversations()?.iter().any(|x| x.id == id) {
@@ -518,6 +533,7 @@ impl Store {
         if system.len() > 60000 {
             return Err("Your context files are too large. Shorten them in Settings.".into());
         }
+        let system = format!("{system}\n\nMANDATORY ANSWER SIZE: Answer in one plain-text paragraph, at most {REPLY_WORDS} words and {reply_chars} characters including spaces. No headings, lists, line breaks or Markdown. Finish your thought within this space. This fixed screen limit overrides verbosity and requests for longer answers.");
         let mut messages = vec![json!({"role":"system","content":system})];
         messages.extend(recent_context(&existing));
         messages.push(json!({"role":"user","content":text}));
@@ -535,7 +551,7 @@ impl Store {
         let mut partial = String::new();
         let mut checkpoint = Instant::now();
         let result = self
-            .generate(&c, messages, c.max_tokens, "chat", &cancel, |s| {
+            .generate(&c, messages, REPLY_TOKENS, reply_chars, "chat", &cancel, |s| {
                 partial.push_str(s);
                 output(s);
                 if checkpoint.elapsed() > Duration::from_millis(300) {
@@ -647,7 +663,7 @@ impl Store {
             json!({"role":"user","content":format!("Date: {}\nExisting memory:\n{}\nProfile (do not needlessly repeat):\n{}\nNew transcript:\n{}",Local::now().format("%Y-%m-%d"),d.memory,d.profile,transcript)}),
         ];
         let (memory, stopped) = self
-            .generate(&c, messages, 1200, "memory", cancel, |_| {})
+            .generate(&c, messages, 1200, 0, "memory", cancel, |_| {})
             .await?;
         if stopped {
             return Ok("Memory update stopped; existing memory retained.".into());
@@ -825,6 +841,21 @@ pub fn delete_key() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn answer_limit_is_hard_and_unicode_safe() {
+        let long = "word ".repeat(100);
+        assert_eq!(reply_limit(&long, 240).split_whitespace().count(), 40);
+        assert_eq!(reply_limit("é🙂test", 2), "é🙂");
+        assert_eq!(reply_limit(&"W".repeat(1000), 999).chars().count(), 240);
+        assert_eq!(reply_limit("one\n\ntwo\tthree", 240), "one two three");
+        assert_eq!(reply_limit("long response", 4), "long");
+        let mut previous = String::new();
+        for i in 1..=long.len() {
+            let next = reply_limit(&long[..i], 30);
+            assert!(next.starts_with(&previous)); previous = next;
+        }
+    }
+
     #[test]
     fn repeated_ui_and_chat_reads_load_keychain_only_once() {
         let key = SessionKey::new();
