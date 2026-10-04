@@ -108,3 +108,7 @@ curl -fsSL https://raw.githubusercontent.com/louisrid/mentor/main/scripts/update
 ```
 
 The command downloads the latest source, builds Mentor, replaces the installed app and opens it. Your chats, context and Keychain credentials stay in place. The first build can take a while. Later builds reuse downloaded dependencies and a shared Rust build cache. If Apple Command Line Tools need installing, finish the popup and run the same command again.
+
+## Keychain prompts
+
+Mentor reads the saved API key once per app session and holds it only in the native process memory. Opening settings/history, sending messages and refreshing the interface reuse that result. Saving or removing a key updates the session immediately. A denied or missing read is also remembered until you relaunch or save a key. The key remains stored in macOS Keychain and is never sent to the frontend. If macOS asks whether Mentor may access it, choose Always Allow to avoid permission prompts on later launches. Rebuilding an unsigned app can cause macOS to ask again.

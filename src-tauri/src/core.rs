@@ -766,15 +766,32 @@ impl Sse {
         out
     }
 }
+// Keep the credential in the native process only. Cache denied/missing reads too,
+// so ordinary UI refreshes cannot repeatedly trigger a Keychain permission dialog.
+#[cfg(any(target_os = "macos", test))]
+struct SessionKey(Mutex<Option<Result<String>>>);
+#[cfg(any(target_os = "macos", test))]
+impl SessionKey {
+    const fn new() -> Self { Self(Mutex::new(None)) }
+    fn read(&self, load: impl FnOnce() -> Result<String>) -> Result<String> {
+        let mut cached = self.0.lock().map_err(err)?;
+        cached.get_or_insert_with(load).clone()
+    }
+    fn replace(&self, value: Result<String>) -> Result<()> {
+        *self.0.lock().map_err(err)? = Some(value);
+        Ok(())
+    }
+}
+#[cfg(target_os = "macos")]
+static SESSION_KEY: SessionKey = SessionKey::new();
 #[cfg(target_os = "macos")]
 fn entry() -> Result<keyring::Entry> {
     keyring::Entry::new("com.louis.mentor", "openrouter").map_err(err)
 }
 #[cfg(target_os = "macos")]
 pub fn key() -> Result<String> {
-    entry()?
-        .get_password()
-        .map_err(|_| "Add your OpenRouter API key in Settings.".into())
+    SESSION_KEY.read(|| entry()?.get_password()
+        .map_err(|_| "Add your OpenRouter API key in Settings.".into()))
 }
 #[cfg(not(target_os = "macos"))]
 pub fn key() -> Result<String> {
@@ -785,7 +802,8 @@ pub fn save_key(value: &str) -> Result<()> {
     if value.trim().is_empty() {
         return Err("API key is empty.".into());
     }
-    entry()?.set_password(value.trim()).map_err(err)
+    entry()?.set_password(value.trim()).map_err(err)?;
+    SESSION_KEY.replace(Ok(value.trim().into()))
 }
 #[cfg(not(target_os = "macos"))]
 pub fn save_key(_value: &str) -> Result<()> {
@@ -793,7 +811,11 @@ pub fn save_key(_value: &str) -> Result<()> {
 }
 #[cfg(target_os = "macos")]
 pub fn delete_key() -> Result<()> {
-    entry()?.delete_credential().map_err(err)
+    match entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => {},
+        Err(e) => return Err(err(e)),
+    }
+    SESSION_KEY.replace(Err("Add your OpenRouter API key in Settings.".into()))
 }
 #[cfg(not(target_os = "macos"))]
 pub fn delete_key() -> Result<()> {
@@ -803,6 +825,27 @@ pub fn delete_key() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn repeated_ui_and_chat_reads_load_keychain_only_once() {
+        let key = SessionKey::new();
+        let calls = std::cell::Cell::new(0);
+        for _ in 0..20 {
+            assert_eq!(key.read(|| { calls.set(calls.get() + 1); Ok("test-key".into()) }).unwrap(), "test-key");
+        }
+        assert_eq!(calls.get(), 1);
+        key.replace(Ok("replacement".into())).unwrap();
+        assert_eq!(key.read(|| panic!("saved key must be cached")).unwrap(), "replacement");
+        key.replace(Err("removed".into())).unwrap();
+        assert_eq!(key.read(|| panic!("removed key must not be reloaded")).unwrap_err(), "removed");
+    }
+    #[test]
+    fn denied_or_missing_key_does_not_prompt_again_until_relaunch() {
+        let key = SessionKey::new();
+        assert!(key.read(|| Err("denied".into())).is_err());
+        assert_eq!(key.read(|| panic!("must not retry denied access")).unwrap_err(), "denied");
+        key.replace(Ok("new-key".into())).unwrap();
+        assert_eq!(key.read(|| panic!("saving recovers without another read")).unwrap(), "new-key");
+    }
     fn temp_store() -> Store {
         Store::open(std::env::temp_dir().join(format!("mentor-test-{}", Uuid::new_v4()))).unwrap()
     }
