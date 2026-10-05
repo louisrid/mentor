@@ -13,7 +13,6 @@ mod desktop {
     #[derive(Clone, Serialize)]
     struct Token {
         text: String,
-        reply_chars: usize,
     }
     struct RuntimeStatus(Mutex<Vec<String>>);
     fn reveal(app: &AppHandle) {
@@ -76,6 +75,7 @@ mod desktop {
     async fn chat(
         id: String,
         text: String,
+        reply_chars: usize,
         on_token: Channel<Token>,
         store: State<'_, Store>,
     ) -> Result<ChatResult, String> {
